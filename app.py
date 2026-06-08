@@ -218,12 +218,12 @@ def get_inventory():
 def add_inventory_item():
     try:
         data = request.json
-        user_id, med_name, expiry = data.get('userId'), data.get('name'), data.get('expiry')
+        user_id, med_name, description, image_url , expiry = data.get('userId'), data.get('name'), data.get('description'), data.get('imageUrl'), data.get('expiry')
 
         # جلب أو إنشاء الدواء
         med_res = supabase.table('medications').select('med_id').eq('med_name', med_name).execute()
         if not med_res.data:
-            new_med = supabase.table('medications').insert({"med_name": med_name, "units_per_package": data.get('units_per_package', 1)}).execute()
+            new_med = supabase.table('medications').insert({"med_name": med_name,"description":description,"image_url":image_url , "units_per_package": data.get('units_per_package', 1)}).execute()
             med_id = new_med.data[0]['med_id']
         else:
             med_id = med_res.data[0]['med_id']
