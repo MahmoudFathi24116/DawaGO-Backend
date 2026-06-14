@@ -121,7 +121,7 @@ def signup():
 def verify_email():
     token_hash = request.args.get('token_hash')
     auth_type = request.args.get('type', 'signup')
-    signin_page = "http://127.0.0.1:5500/frontend/myfrontend/pages/signin.html"
+    signin_page = "https://dawa-go-frontend.vercel.app/pages/signin.html"
     if not token_hash: return redirect(f"{signin_page}?error=missing_token")
     try:
         supabase.auth.verify_otp({"token_hash": token_hash, "type": auth_type})
@@ -176,8 +176,9 @@ def update_user_profile(user_id):
     try:
         data = request.json
         role = data.get('role')
-        supabase.table('users_profile').update({"full_name": data.get('full_name'), "phone": data.get('phone')}).eq('user_id', user_id).execute()
-
+        supabase.table('users_profile').update({"full_name": data.get('full_name'),"phone": data.get('phone')}).eq('user_id', user_id).execute()
+        if role == 'customer' :
+            supabase.table('customers_details').update({"latitude":data.get('latitude'),"longitude":data.get('longitude')}).eq('customer_id', user_id).execute()
         if role == 'pharmacy':
             pharmacy_data = {
                 "pharmacy_name": data.get('pharmacy_name'), "governorate": data.get('governorate'),
@@ -631,6 +632,47 @@ def get_my_bookings():
             "status": "error",
             "message": "حدث خطأ أثناء جلب البيانات من السيرفر"
         }), 500
+
+
+from datetime import datetime
+@app.route('/api/public/cron-clean-expired', methods=['POST'])
+def clean_expired_bookings():
+    try:
+        # 1. جلب الحجوزات المؤكدة التي انتهت مهلتها بناءً على الوقت الحالي
+        current_time = datetime.utcnow().isoformat()
+
+        expired_info = supabase.table('bookings') \
+            .select('booking_id', 'inventory_id') \
+            .eq('status', 'confirmed') \
+            .lt('expires_at', current_time) \
+            .execute()
+
+        if not expired_info.data:
+            return jsonify({"status": "success", "message": "لا توجد حجوزات منتهية حالياً"}), 200
+
+        # 2. المرور على كل حجز منتهي وتحديثه وتشغيل الترقية له
+        for booking in expired_info.data:
+            b_id = booking['booking_id']
+            inv_id = booking['inventory_id']
+
+            # تحديث حالة هذا الحجز بعينه إلى expired وتصفير المؤقت
+            supabase.table('bookings') \
+                .update({"status": "expired", "expires_at": None}) \
+                .eq('booking_id', b_id) \
+                .execute()
+
+            # تشغيل محرك الترقية للشخص التالي في الانتظار لهذا الدواء
+            promote_waiting_list(inv_id)
+
+        return jsonify({
+            "status": "success",
+            "message": f"تم تنظيف وترقية {len(expired_info.data)} حجوزات منتهية بنجاح"
+        }), 200
+
+    except Exception as e:
+        print(f"Cron Job Error: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
