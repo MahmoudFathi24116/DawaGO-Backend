@@ -253,7 +253,7 @@ def add_inventory_item():
 def update_inventory():
     try:
         data = request.json
-        inv_id = data.get('inventoryId')
+        inv_id = int(data.get('inventoryId'))
 
         # 1. جلب البيانات الحالية والمحجوز "المؤكد" فقط
         # سنستخدم الفيو 'vw_smart_inventory_search' لجلب الـ total_reserved
