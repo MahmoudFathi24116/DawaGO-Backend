@@ -222,20 +222,21 @@ def add_inventory_item():
         user_id, med_name, description, image_url , expiry = data.get('userId'), data.get('name'), data.get('description'), data.get('imageUrl'), data.get('expiry')
 
         # جلب أو إنشاء الدواء
-        med_res = supabase.table('medications').select('med_id').eq('med_name', med_name).execute()
+        med_res = supabase.table('medications').select('*').eq('med_name', med_name).execute()
         if not med_res.data:
             new_med = supabase.table('medications').insert({"med_name": med_name,"description":description,"image_url":image_url , "units_per_package": data.get('units_per_package', 1)}).execute()
             med_id = new_med.data[0]['med_id']
+            units_per_pkg = new_med.data[0]['units_per_package']
         else:
             med_id = med_res.data[0]['med_id']
-
+            units_per_pkg = med_res.data[0]['units_per_package']
         # فحص التكرار
         exist = supabase.table('inventory').select('*').eq('pharmacy_id', user_id).eq('med_id', med_id).eq('expiry_date', expiry).execute()
         if exist.data:
             return jsonify({"status": "exists", "message": "الصنف موجود مسبقاً"}), 409
 
         # الحساب والحفظ
-        total = (int(data.get('pkgs', 0)) * int(data.get('units_per_package', 1))) + int(data.get('extra_units', 0))
+        total = ( int(data.get('pkgs', 0)) * units_per_pkg + int(data.get('extra_units', 0)) )
         insert_res = supabase.table('inventory').insert({
             "pharmacy_id": user_id, "med_id": med_id, "expiry_date": expiry, "total_units": total, "price": data.get('price')
         }).execute()
