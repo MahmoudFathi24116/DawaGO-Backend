@@ -253,23 +253,37 @@ def add_inventory_item():
 def update_inventory():
     try:
         data = request.json
-        inv_id = int(data.get('inventoryId'))
+        if not data or 'inventoryId' not in data:
+            return jsonify({"status": "error", "message": "لم يتم استلام معرّف الصنف البرمجي (inventoryId)"}), 400
 
-        # 1. جلب البيانات الحالية والمحجوز "المؤكد" فقط
-        # سنستخدم الفيو 'vw_smart_inventory_search' لجلب الـ total_reserved
-        # أو نحسبها مباشرة من جدول الحجوزات لضمان الدقة اللحظية
+        # ترك المتغير مرن (يقبل UUID النصي أو الرقم الإنتجر) حسب تصميم الـ DB الخاص بك
+        raw_inv_id = data.get('inventoryId')
+        try:
+            inv_id = int(raw_inv_id)
+        except ValueError:
+            inv_id = str(raw_inv_id) # لو كان UUID نصي
+
+        # 1. جلب البيانات الحالية والمحجوز "المؤكد" فقط من جدول الحجوزات
         reserved_res = supabase.table('bookings') \
             .select('reserved_quantity') \
             .eq('inventory_id', inv_id) \
             .eq('status', 'confirmed') \
             .execute()
 
-        total_confirmed = sum(item['reserved_quantity'] for item in reserved_res.data)
+        total_confirmed = sum(item.get('reserved_quantity', 0) for item in (reserved_res.data or []))
 
-        # 2. جلب معامل التحويل (كم وحدة في العلبة)
-        res = supabase.table('inventory').select('med_id').eq('inventory_id', inv_id).single().execute()
-        med_res = supabase.table('medications').select('units_per_package').eq('med_id', res.data['med_id']).single().execute()
-        units_per_pkg = med_res.data['units_per_package']
+        # 2. جلب معامل التحويل (كم وحدة في العلبة) بأسلوب آمن بدون .single() لتجنب انهيار السيرفر
+        res = supabase.table('inventory').select('med_id').eq('inventory_id', inv_id).execute()
+        if not res.data:
+            return jsonify({"status": "error", "message": f"لم يتم العثور على الصنف رقم {inv_id} في جدول المخازن."}), 404
+
+        med_id = res.data[0]['med_id']
+
+        med_res = supabase.table('medications').select('units_per_package').eq('med_id', med_id).execute()
+        if not med_res.data:
+            return jsonify({"status": "error", "message": "هذا الصنف غير مسجل في جدول الأدوية الرئيسي للسيستم."}), 404
+
+        units_per_pkg = med_res.data[0]['units_per_package'] or 1
 
         # 3. حساب الكمية الجديدة التي يرغب الصيدلي في إدخالها
         pkgs = data.get('pkgs')
@@ -279,8 +293,8 @@ def update_inventory():
             new_total = (int(pkgs) * units_per_pkg) + int(units)
         else:
             # لو لم يغير الكمية (تغيير سعر فقط مثلاً)
-            inv_current = supabase.table('inventory').select('total_units').eq('inventory_id', inv_id).single().execute()
-            new_total = inv_current.data['total_units']
+            inv_current = supabase.table('inventory').select('total_units').eq('inventory_id', inv_id).execute()
+            new_total = inv_current.data[0]['total_units'] if inv_current.data else 0
 
         # --- الحماية الذكية ---
         # 4. منع الصيدلي من خفض المخزن لأقل من المحجوز مؤكداً
@@ -292,19 +306,20 @@ def update_inventory():
 
         # 5. تنفيذ التحديث إذا اجتاز الفحص
         update_fields = {"total_units": new_total}
-        if data.get('price'):
+        if data.get('price') is not None:
             update_fields["price"] = float(data.get('price'))
 
         supabase.table('inventory').update(update_fields).eq('inventory_id', inv_id).execute()
 
         # 6. تشغيل محرك الترقية (إذا زاد المخزن)
-        promote_waiting_list(inv_id)
+        if 'promote_waiting_list' in globals():
+            promote_waiting_list(inv_id)
 
         return jsonify({"status": "success", "message": "تم تحديث المخزن بنجاح."}), 200
 
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
-
+        print("خطأ داخلي في السيرفر:", str(e)) # تظهر لك في الـ Error Logs الخاصة بـ PythonAnywhere
+        return jsonify({"status": "error", "message": f"خطأ داخلي: {str(e)}"}), 500
 # ==========================================
 # 4. محرك البحث والحجوزات (Booking System)
 # ==========================================
